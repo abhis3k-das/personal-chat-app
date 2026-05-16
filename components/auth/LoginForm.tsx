@@ -109,7 +109,7 @@ export default function LoginForm() {
     >
       <div className="w-full max-w-md rounded-3xl bg-white/80 p-8 shadow-xl backdrop-blur">
         <div className="mb-8 text-center">
-          <h1 className={`text-4xl font-bold ${theme.text}`}>OnlyUs 💕</h1>
+          <h1 className={`text-4xl font-bold ${theme.text}`}>PritAbhi 💕</h1>
           <p className="mt-2 text-gray-600">
             A private little space for us.
           </p>
