@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   addDoc,
   arrayRemove,
@@ -9,7 +10,6 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
   getDocs,
   onSnapshot,
   orderBy,
@@ -21,7 +21,6 @@ import {
   writeBatch,
 } from "firebase/firestore";
 
-
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 
@@ -32,23 +31,28 @@ import TypingIndicator from "@/components/chat/TypingIndicator";
 import PinnedDateEvent from "@/components/chat/PinnedDateEvent";
 
 import { Message, MessageType } from "@/types/message";
-import { THEMES, ThemeId } from "@/constants/themes";
+import { DEFAULT_THEME_ID, THEMES, ThemeId } from "@/constants/themes";
 import { DateEvent } from "@/types/date-event";
 import { DisplayDateEvent, getVisibleDateEvents } from "@/lib/dateEvents";
 
 export default function ChatWindow() {
+  const searchParams = useSearchParams();
+  const highlightedMessageId = searchParams.get("messageId");
+
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+
   const [partnerId, setPartnerId] = useState("");
-  const [partnerName, setPartnerName] = useState("Partner");
+  const [partnerActualName, setPartnerActualName] = useState("Partner");
+  const [currentUserPartnerName, setCurrentUserPartnerName] = useState("");
+
   const [messages, setMessages] = useState<Message[]>([]);
 
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const [isPartnerOnline, setIsPartnerOnline] = useState(false);
   const [partnerLastSeen, setPartnerLastSeen] = useState<any>(null);
-  const searchParams = useSearchParams();
-  const highlightedMessageId = searchParams.get("messageId");
   const [partnerPhotoURL, setPartnerPhotoURL] = useState("");
-  const [themeId, setThemeId] = useState<ThemeId>("purple");
+
+  const [themeId, setThemeId] = useState<ThemeId>(DEFAULT_THEME_ID)
   const selectedTheme = THEMES[themeId];
 
   const [dateEvents, setDateEvents] = useState<DisplayDateEvent[]>([]);
@@ -65,43 +69,68 @@ export default function ChatWindow() {
     emoji: string;
   } | null>(null);
 
+  const partnerName = useMemo(() => {
+    return currentUserPartnerName.trim() || partnerActualName || "Partner";
+  }, [currentUserPartnerName, partnerActualName]);
+
+  const resetPartnerData = () => {
+    setMessages([]);
+    setPartnerActualName("Partner");
+    setPartnerMood(null);
+    setIsPartnerTyping(false);
+    setIsPartnerOnline(false);
+    setPartnerLastSeen(null);
+    setPartnerPhotoURL("");
+  };
+
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (!user) return;
 
       setCurrentUser(user);
 
+      const actualName =
+        user.displayName || user.email?.split("@")[0] || "User";
+
       await setDoc(
         doc(db, "users", user.uid),
         {
+          uid: user.uid,
+          name: actualName,
+          email: user.email || "",
+          photoURL: user.photoURL || "",
           online: true,
+          updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
-
-      const userRef = doc(db, "users", user.uid);
-      const userSnap = await getDoc(userRef);
-
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
-
-        setPartnerId(userData.partnerId);
-
-        if (userData.partnerId) {
-          const partnerRef = doc(db, "users", userData.partnerId);
-          const partnerSnap = await getDoc(partnerRef);
-
-          if (partnerSnap.exists()) {
-            const partnerData = partnerSnap.data();
-
-            setPartnerName(partnerData.nickname || partnerData.name || "Partner");
-          }
-        }
-      }
     });
 
     return () => unsubscribeAuth();
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const currentUserRef = doc(db, "users", currentUser.uid);
+
+    const unsubscribeCurrentUser = onSnapshot(currentUserRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+
+      const userData = snapshot.data();
+
+      const savedPartnerId = userData.partnerId || "";
+
+      setPartnerId(savedPartnerId);
+      setCurrentUserPartnerName(userData.partnerName || "");
+
+      if (!savedPartnerId) {
+        resetPartnerData();
+      }
+    });
+
+    return () => unsubscribeCurrentUser();
+  }, [currentUser]);
 
   useEffect(() => {
     const settingsRef = doc(db, "settings", "couple");
@@ -161,7 +190,10 @@ export default function ChatWindow() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (!partnerId) return;
+    if (!partnerId) {
+      setPartnerMood(null);
+      return;
+    }
 
     const moodRef = doc(db, "moods", partnerId);
 
@@ -214,7 +246,10 @@ export default function ChatWindow() {
   }, [currentUser, partnerId, messages.length]);
 
   useEffect(() => {
-    if (!currentUser || !partnerId) return;
+    if (!currentUser || !partnerId) {
+      setMessages([]);
+      return;
+    }
 
     const messagesQuery = query(
       collection(db, "messages"),
@@ -244,7 +279,10 @@ export default function ChatWindow() {
   }, [currentUser, partnerId]);
 
   useEffect(() => {
-    if (!partnerId) return;
+    if (!partnerId) {
+      setIsPartnerTyping(false);
+      return;
+    }
 
     const typingRef = doc(db, "typingStatus", partnerId);
 
@@ -255,6 +293,7 @@ export default function ChatWindow() {
       }
 
       const typingData = snapshot.data();
+
       setIsPartnerTyping(Boolean(typingData.isTyping));
     });
 
@@ -262,15 +301,31 @@ export default function ChatWindow() {
   }, [partnerId]);
 
   useEffect(() => {
-    if (!partnerId) return;
+    if (!partnerId) {
+      setPartnerActualName("Partner");
+      setPartnerPhotoURL("");
+      setIsPartnerOnline(false);
+      setPartnerLastSeen(null);
+      return;
+    }
 
     const partnerRef = doc(db, "users", partnerId);
 
     const unsubscribePartner = onSnapshot(partnerRef, (snapshot) => {
-      if (!snapshot.exists()) return;
+      if (!snapshot.exists()) {
+        setPartnerActualName("Partner");
+        setPartnerPhotoURL("");
+        setIsPartnerOnline(false);
+        setPartnerLastSeen(null);
+        return;
+      }
 
       const partnerData = snapshot.data();
-      setPartnerName(partnerData.nickname || partnerData.name || "Partner");
+
+      setPartnerActualName(
+        partnerData.name || partnerData.nickname || "Partner"
+      );
+
       setPartnerPhotoURL(partnerData.photoURL || "");
       setIsPartnerOnline(Boolean(partnerData.online));
       setPartnerLastSeen(partnerData.lastSeen || null);
@@ -303,6 +358,7 @@ export default function ChatWindow() {
       editedAt: serverTimestamp(),
     });
   };
+
   const handleDeleteMessage = async (messageId: string) => {
     const message = messages.find((item) => item.id === messageId);
 
@@ -311,6 +367,7 @@ export default function ChatWindow() {
 
     await deleteDoc(doc(db, "messages", messageId));
   };
+
   const handleLogout = async () => {
     if (!currentUser) return;
 
@@ -381,7 +438,7 @@ export default function ChatWindow() {
   };
 
   const handleReactToMessage = async (messageId: string, reaction: string) => {
-    if (!currentUser) return;
+    if (!currentUser || !partnerId) return;
 
     const messageRef = doc(db, "messages", messageId);
 
@@ -394,7 +451,7 @@ export default function ChatWindow() {
     messageId: string,
     isAlreadyFavorite: boolean
   ) => {
-    if (!currentUser) return;
+    if (!currentUser || !partnerId) return;
 
     const messageRef = doc(db, "messages", messageId);
 
@@ -406,7 +463,7 @@ export default function ChatWindow() {
   };
 
   const handleTypingChange = async (isTyping: boolean) => {
-    if (!currentUser) return;
+    if (!currentUser || !partnerId) return;
 
     const typingRef = doc(db, "typingStatus", currentUser.uid);
 
@@ -428,21 +485,73 @@ export default function ChatWindow() {
     );
   }
 
+  if (!partnerId) {
+    return (
+      <div
+        className={`flex h-[100dvh] w-full max-w-4xl items-center justify-center overflow-hidden bg-white/80 px-4 shadow-xl backdrop-blur sm:h-[85vh] sm:rounded-3xl ${selectedTheme.border} sm:border`}
+      >
+        <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-xl">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-purple-100 text-3xl">
+            🔗
+          </div>
+
+          <h1 className={`text-2xl font-bold ${selectedTheme.text}`}>
+            Partner not connected
+          </h1>
+
+          <p className="mt-3 text-sm leading-6 text-gray-600">
+            Add your partner&apos;s user ID from Settings to unlock the private
+            chat. Until then, messages and chat input will stay hidden.
+          </p>
+
+          <div className="mt-5 rounded-2xl bg-gray-50 p-4 text-left">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-400">
+              Your User ID
+            </p>
+
+            <code className="mt-2 block break-all text-xs font-semibold text-gray-700">
+              {currentUser.uid}
+            </code>
+          </div>
+
+          <Link
+            href="/settings"
+            className={`mt-6 inline-flex w-full items-center justify-center rounded-xl ${selectedTheme.primary} ${selectedTheme.primaryHover} px-4 py-3 font-semibold text-white shadow-md`}
+          >
+            Open Settings
+          </Link>
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="mt-3 w-full rounded-xl bg-gray-100 px-4 py-3 font-semibold text-gray-700 hover:bg-gray-200"
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`flex h-[100dvh] w-full max-w-4xl flex-col overflow-hidden bg-white/80 shadow-xl backdrop-blur sm:h-[85vh] sm:rounded-3xl ${selectedTheme.border} sm:border`}
     >
+
+
       <ChatHeader
         partnerName={partnerName}
-        partnerPhotoURL={partnerPhotoURL}
+        partnerPhotoURL={''}
+        // partnerPhotoURL={partnerPhotoURL}
         partnerMood={partnerMood}
         currentUserMood={currentUserMood}
+        dateEvents={dateEvents}
         isPartnerOnline={isPartnerOnline}
         partnerLastSeen={partnerLastSeen}
+        themeId={themeId}
         onSelectMood={handleSelectMood}
         onLogout={handleLogout}
       />
-
       <PinnedDateEvent events={dateEvents} />
 
       <MessageList
@@ -458,6 +567,7 @@ export default function ChatWindow() {
       <TypingIndicator isTyping={isPartnerTyping} partnerName={partnerName} />
 
       <ChatInput
+        themeId={themeId}
         onSendMessage={handleSendMessage}
         onTypingChange={handleTypingChange}
       />

@@ -19,7 +19,7 @@ import {
 import { onAuthStateChanged, User } from "firebase/auth";
 
 import { auth, db } from "@/lib/firebase";
-import { THEMES, ThemeId } from "@/constants/themes";
+import { DEFAULT_THEME_ID, THEMES, ThemeId } from "@/constants/themes";
 import { DateEvent, DateEventType } from "@/types/date-event";
 import { Message } from "@/types/message";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
@@ -51,7 +51,7 @@ function formatMessageDate(createdAt: any) {
 export default function SettingsClient() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  const [themeId, setThemeId] = useState<ThemeId>("purple");
+  const [themeId, setThemeId] = useState<ThemeId>(DEFAULT_THEME_ID)
   const [events, setEvents] = useState<DateEvent[]>([]);
   const [favoriteMessages, setFavoriteMessages] = useState<Message[]>([]);
 
@@ -62,8 +62,20 @@ export default function SettingsClient() {
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
   const [profilePhotoURL, setProfilePhotoURL] = useState("");
   const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false);
+
+  const [accountName, setAccountName] = useState("");
+  const [accountEmail, setAccountEmail] = useState("");
+
+  const [partnerName, setPartnerName] = useState("");
+  const [savingPartnerName, setSavingPartnerName] = useState(false);
+
+  const [partnerId, setPartnerId] = useState("");
+  const [savingPartnerId, setSavingPartnerId] = useState(false);
+
   const selectedTheme = THEMES[themeId];
 
   const importantDates = useMemo(() => {
@@ -75,27 +87,60 @@ export default function SettingsClient() {
   }, [events]);
 
   useEffect(() => {
-    if (!currentUser) return;
-
-    const userRef = doc(db, "users", currentUser.uid);
-
-    const unsubscribeUser = onSnapshot(userRef, (snapshot) => {
-      if (!snapshot.exists()) return;
-
-      const userData = snapshot.data();
-      setProfilePhotoURL(userData.photoURL || "");
-    });
-
-    return () => unsubscribeUser();
-  }, [currentUser]);
-
-  useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
 
     return () => unsubscribeAuth();
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const userRef = doc(db, "users", currentUser.uid);
+
+    const actualName =
+      currentUser.displayName || currentUser.email?.split("@")[0] || "User";
+
+    const actualEmail = currentUser.email || "";
+
+    const unsubscribeUser = onSnapshot(userRef, async (snapshot) => {
+      if (!snapshot.exists()) {
+        setAccountName(actualName);
+        setAccountEmail(actualEmail);
+        setPartnerName("");
+        setPartnerId("");
+        setProfilePhotoURL(currentUser.photoURL || "");
+
+        await setDoc(
+          userRef,
+          {
+            uid: currentUser.uid,
+            name: actualName,
+            email: actualEmail,
+            photoURL: currentUser.photoURL || "",
+            partnerName: "",
+            partnerId: "",
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        return;
+      }
+
+      const userData = snapshot.data();
+
+      setAccountName(userData.name || actualName);
+      setAccountEmail(userData.email || actualEmail);
+      setPartnerName(userData.partnerName || "");
+      setPartnerId(userData.partnerId || "");
+      setProfilePhotoURL(userData.photoURL || currentUser.photoURL || "");
+    });
+
+    return () => unsubscribeUser();
+  }, [currentUser]);
 
   useEffect(() => {
     const settingsRef = doc(db, "settings", "couple");
@@ -161,7 +206,7 @@ export default function SettingsClient() {
 
     const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
     const isImage = allowedTypes.includes(file.type);
-    const maxSizeInBytes = 2 * 1024 * 1024; // 2 MB
+    const maxSizeInBytes = 2 * 1024 * 1024;
 
     if (!isImage) {
       alert("Please upload JPG, PNG, or WEBP only.");
@@ -175,6 +220,7 @@ export default function SettingsClient() {
 
     setUploadingProfilePhoto(true);
     setSuccessMessage("");
+    setErrorMessage("");
 
     try {
       const extensionMap: Record<string, string> = {
@@ -210,9 +256,110 @@ export default function SettingsClient() {
     }
   };
 
+  const handleSavePartnerName = async () => {
+    if (!currentUser) return;
+
+    const actualName =
+      currentUser.displayName || currentUser.email?.split("@")[0] || "User";
+
+    const actualEmail = currentUser.email || "";
+
+    setSavingPartnerName(true);
+    setSuccessMessage("");
+    setErrorMessage("");
+
+    try {
+      await setDoc(
+        doc(db, "users", currentUser.uid),
+        {
+          uid: currentUser.uid,
+          name: accountName || actualName,
+          email: accountEmail || actualEmail,
+          photoURL: profilePhotoURL || currentUser.photoURL || "",
+          partnerName: partnerName.trim(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setSuccessMessage("Partner name updated successfully 💜");
+    } finally {
+      setSavingPartnerName(false);
+    }
+  };
+
+  const handleSavePartnerId = async () => {
+    if (!currentUser) return;
+
+    const trimmedPartnerId = partnerId.trim();
+
+    setSuccessMessage("");
+    setErrorMessage("");
+
+    if (!trimmedPartnerId) {
+      setErrorMessage("Please enter your partner user ID.");
+      return;
+    }
+
+    if (trimmedPartnerId === currentUser.uid) {
+      setErrorMessage("You cannot use your own user ID as partner ID.");
+      return;
+    }
+
+    setSavingPartnerId(true);
+
+    try {
+      await setDoc(
+        doc(db, "users", currentUser.uid),
+        {
+          partnerId: trimmedPartnerId,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setSuccessMessage("Partner connected successfully 💜");
+    } finally {
+      setSavingPartnerId(false);
+    }
+  };
+
+  const handleClearPartnerId = async () => {
+    if (!currentUser) return;
+
+    setSavingPartnerId(true);
+    setSuccessMessage("");
+    setErrorMessage("");
+
+    try {
+      await setDoc(
+        doc(db, "users", currentUser.uid),
+        {
+          partnerId: "",
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setPartnerId("");
+      setSuccessMessage("Partner connection removed.");
+    } finally {
+      setSavingPartnerId(false);
+    }
+  };
+
+  const handleCopyUserId = async () => {
+    if (!currentUser) return;
+
+    await navigator.clipboard.writeText(currentUser.uid);
+    setSuccessMessage("User ID copied. Share this with your partner.");
+    setErrorMessage("");
+  };
+
   const handleSaveTheme = async () => {
     setSaving(true);
     setSuccessMessage("");
+    setErrorMessage("");
 
     try {
       const settingsRef = doc(db, "settings", "couple");
@@ -257,6 +404,7 @@ export default function SettingsClient() {
 
     setSaving(true);
     setSuccessMessage("");
+    setErrorMessage("");
 
     try {
       if (editingEventId) {
@@ -506,7 +654,8 @@ export default function SettingsClient() {
               Settings ⚙️
             </h1>
             <p className="mt-1 text-gray-600">
-              Customize themes, dates, and favorite messages.
+              Customize profile, partner connection, themes, dates, and favorite
+              messages.
             </p>
           </div>
 
@@ -523,6 +672,148 @@ export default function SettingsClient() {
             {successMessage}
           </p>
         )}
+
+        {errorMessage && (
+          <p className="mb-5 rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+            {errorMessage}
+          </p>
+        )}
+
+        <div className="mb-6 rounded-3xl bg-white/80 p-6 shadow-xl backdrop-blur">
+          <div className="mb-5">
+            <h2 className={`text-xl font-bold ${selectedTheme.text}`}>
+              Profile 👤
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              View your linked account, share your user ID, connect your
+              partner, and set a custom partner display name.
+            </p>
+          </div>
+
+          <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+              Linked Account
+            </h3>
+
+            <div className="space-y-2 text-sm text-gray-700">
+              <p>
+                <span className="font-semibold text-gray-900">Name:</span>{" "}
+                {accountName || "Not available"}
+              </p>
+
+              <p>
+                <span className="font-semibold text-gray-900">Email:</span>{" "}
+                {accountEmail || "Not available"}
+              </p>
+
+              <div>
+                <p className="mb-1 font-semibold text-gray-900">
+                  Your User ID:
+                </p>
+
+                <div className="flex flex-col gap-2 rounded-xl bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <code className="break-all text-xs font-semibold text-gray-700">
+                    {currentUser?.uid || "Not available"}
+                  </code>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyUserId}
+                    disabled={!currentUser}
+                    className="rounded-lg bg-purple-100 px-3 py-2 text-xs font-bold text-purple-700 hover:bg-purple-200 disabled:opacity-60"
+                  >
+                    Copy ID
+                  </button>
+                </div>
+
+                <p className="mt-2 text-xs text-gray-500">
+                  Share this ID with your partner so they can connect with you.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Partner User ID
+            </label>
+
+            <p className="mb-3 text-xs text-gray-500">
+              Paste your partner&apos;s user ID here to connect your chat with
+              them.
+            </p>
+
+            <input
+              type="text"
+              value={partnerId}
+              onChange={(e) => setPartnerId(e.target.value)}
+              placeholder="Paste partner user ID"
+              className={`w-full rounded-xl border ${selectedTheme.border} px-4 py-3 outline-none focus:border-purple-500`}
+            />
+
+            <p className="mt-3 text-sm text-gray-600">
+              Connected partner ID:{" "}
+              <span className="break-all font-semibold text-gray-900">
+                {partnerId.trim() || "Not connected"}
+              </span>
+            </p>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                disabled={savingPartnerId}
+                onClick={handleSavePartnerId}
+                className={`flex-1 rounded-xl ${selectedTheme.primary} ${selectedTheme.primaryHover} py-3 font-semibold text-white shadow-md disabled:opacity-60`}
+              >
+                {savingPartnerId ? "Saving..." : "Save partner ID"}
+              </button>
+
+              <button
+                type="button"
+                disabled={savingPartnerId || !partnerId.trim()}
+                onClick={handleClearPartnerId}
+                className="rounded-xl bg-gray-100 px-4 py-3 font-semibold text-gray-700 hover:bg-gray-200 disabled:opacity-60"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Partner Name
+            </label>
+
+            <p className="mb-3 text-xs text-gray-500">
+              This name will be used as the partner display name. If this is
+              empty, the partner&apos;s actual linked account name will be used.
+            </p>
+
+            <input
+              type="text"
+              value={partnerName}
+              onChange={(e) => setPartnerName(e.target.value)}
+              placeholder={accountName || "Enter partner name"}
+              className={`w-full rounded-xl border ${selectedTheme.border} px-4 py-3 outline-none focus:border-purple-500`}
+            />
+
+            <p className="mt-3 text-sm text-gray-600">
+              Currently shown as:{" "}
+              <span className="font-semibold text-gray-900">
+                {partnerName.trim() || "Partner actual account name"}
+              </span>
+            </p>
+
+            <button
+              type="button"
+              disabled={savingPartnerName}
+              onClick={handleSavePartnerName}
+              className={`mt-4 w-full rounded-xl ${selectedTheme.primary} ${selectedTheme.primaryHover} py-3 font-semibold text-white shadow-md disabled:opacity-60`}
+            >
+              {savingPartnerName ? "Saving..." : "Save partner name"}
+            </button>
+          </div>
+        </div>
 
         {/* <div className="mb-6 rounded-3xl bg-white/80 p-6 shadow-xl backdrop-blur">
           <div className="mb-4">
@@ -565,6 +856,7 @@ export default function SettingsClient() {
             </div>
           </div>
         </div> */}
+
         <div className="mb-6 rounded-3xl bg-white/80 p-6 shadow-xl backdrop-blur">
           <p className="mb-3 block text-sm font-medium text-gray-700">Theme</p>
 
@@ -578,10 +870,11 @@ export default function SettingsClient() {
                   key={theme.id}
                   type="button"
                   onClick={() => setThemeId(id)}
-                  className={`rounded-2xl border p-4 text-left transition ${isSelected
-                    ? "border-purple-500 bg-purple-50 shadow-md"
-                    : "border-gray-200 bg-white hover:bg-gray-50"
-                    }`}
+                  className={`rounded-2xl border p-4 text-left transition ${
+                    isSelected
+                      ? "border-purple-500 bg-purple-50 shadow-md"
+                      : "border-gray-200 bg-white hover:bg-gray-50"
+                  }`}
                 >
                   <div
                     className={`mb-3 h-16 rounded-xl bg-gradient-to-br ${theme.background}`}

@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { THEMES, ThemeId } from "@/constants/themes";
+import { DEFAULT_THEME_ID, THEMES, ThemeId } from "@/constants/themes";
 import ChatWindow from "@/components/chat/ChatWindow";
 
 export default function ChatPageClient() {
-  const [themeId, setThemeId] = useState<ThemeId>("purple");
+  const [themeId, setThemeId] = useState<ThemeId>(DEFAULT_THEME_ID)
 
   const selectedTheme = THEMES[themeId];
 
