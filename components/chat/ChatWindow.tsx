@@ -1,11 +1,13 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   addDoc,
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -18,6 +20,7 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
+
 
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
@@ -42,7 +45,9 @@ export default function ChatWindow() {
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const [isPartnerOnline, setIsPartnerOnline] = useState(false);
   const [partnerLastSeen, setPartnerLastSeen] = useState<any>(null);
-
+  const searchParams = useSearchParams();
+  const highlightedMessageId = searchParams.get("messageId");
+  const [partnerPhotoURL, setPartnerPhotoURL] = useState("");
   const [themeId, setThemeId] = useState<ThemeId>("purple");
   const selectedTheme = THEMES[themeId];
 
@@ -265,8 +270,8 @@ export default function ChatWindow() {
       if (!snapshot.exists()) return;
 
       const partnerData = snapshot.data();
-
       setPartnerName(partnerData.nickname || partnerData.name || "Partner");
+      setPartnerPhotoURL(partnerData.photoURL || "");
       setIsPartnerOnline(Boolean(partnerData.online));
       setPartnerLastSeen(partnerData.lastSeen || null);
     });
@@ -274,6 +279,38 @@ export default function ChatWindow() {
     return () => unsubscribePartner();
   }, [partnerId]);
 
+  const canModifyMessage = (message: Message) => {
+    if (!currentUser) return false;
+    if (message.senderId !== currentUser.uid) return false;
+    if (!message.createdAt?.toDate) return false;
+
+    const createdTime = message.createdAt.toDate().getTime();
+    const now = Date.now();
+
+    return now - createdTime <= 5 * 60 * 1000;
+  };
+
+  const handleEditMessage = async (messageId: string, updatedText: string) => {
+    const message = messages.find((item) => item.id === messageId);
+
+    if (!message) return;
+    if (!canModifyMessage(message)) return;
+
+    const messageRef = doc(db, "messages", messageId);
+
+    await updateDoc(messageRef, {
+      text: updatedText,
+      editedAt: serverTimestamp(),
+    });
+  };
+  const handleDeleteMessage = async (messageId: string) => {
+    const message = messages.find((item) => item.id === messageId);
+
+    if (!message) return;
+    if (!canModifyMessage(message)) return;
+
+    await deleteDoc(doc(db, "messages", messageId));
+  };
   const handleLogout = async () => {
     if (!currentUser) return;
 
@@ -397,6 +434,7 @@ export default function ChatWindow() {
     >
       <ChatHeader
         partnerName={partnerName}
+        partnerPhotoURL={partnerPhotoURL}
         partnerMood={partnerMood}
         currentUserMood={currentUserMood}
         isPartnerOnline={isPartnerOnline}
@@ -410,8 +448,11 @@ export default function ChatWindow() {
       <MessageList
         messages={messages}
         currentUserId={currentUser.uid}
+        highlightedMessageId={highlightedMessageId}
         onReact={handleReactToMessage}
         onToggleFavorite={handleToggleFavorite}
+        onEditMessage={handleEditMessage}
+        onDeleteMessage={handleDeleteMessage}
       />
 
       <TypingIndicator isTyping={isPartnerTyping} partnerName={partnerName} />

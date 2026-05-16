@@ -19,6 +19,7 @@ interface ChatHeaderProps {
   dateEvents?: DisplayDateEvent[];
   isPartnerOnline?: boolean;
   partnerLastSeen?: any;
+  partnerPhotoURL?: string;
   onSelectMood: (mood: {
     value: string;
     label: string;
@@ -47,6 +48,7 @@ export default function ChatHeader({
   partnerLastSeen,
   onSelectMood,
   onLogout,
+  partnerPhotoURL,
 }: ChatHeaderProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -65,8 +67,16 @@ export default function ChatHeader({
     <header className="relative z-40 border-b border-purple-100 bg-white/90 px-4 py-3 backdrop-blur sm:px-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 text-lg font-bold text-white shadow-md">
-            {partnerInitial}
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 text-lg font-bold text-white shadow-md">
+            {partnerPhotoURL ? (
+              <img
+                src={partnerPhotoURL}
+                alt={partnerName}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              partnerInitial
+            )}
           </div>
 
           <div className="min-w-0">
@@ -83,9 +93,8 @@ export default function ChatHeader({
             </div>
 
             <p
-              className={`mt-0.5 text-xs font-semibold ${
-                isPartnerOnline ? "text-green-600" : "text-gray-400"
-              }`}
+              className={`mt-0.5 text-xs font-semibold ${isPartnerOnline ? "text-green-600" : "text-gray-400"
+                }`}
             >
               {isPartnerOnline ? "Online now" : formatLastSeen(partnerLastSeen)}
             </p>
@@ -133,11 +142,10 @@ export default function ChatHeader({
                         key={mood.value}
                         type="button"
                         onClick={() => handleMoodSelect(mood)}
-                        className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-purple-50 ${
-                          isSelected
+                        className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-purple-50 ${isSelected
                             ? "bg-purple-50 text-purple-700"
                             : "text-gray-700"
-                        }`}
+                          }`}
                       >
                         <span>
                           {mood.emoji} {mood.label}

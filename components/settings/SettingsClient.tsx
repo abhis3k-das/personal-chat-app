@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   addDoc,
+  arrayRemove,
   collection,
   deleteDoc,
   doc,
@@ -21,6 +22,8 @@ import { auth, db } from "@/lib/firebase";
 import { THEMES, ThemeId } from "@/constants/themes";
 import { DateEvent, DateEventType } from "@/types/date-event";
 import { Message } from "@/types/message";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { storage } from "@/lib/firebase";
 
 type DateFormState = {
   title: string;
@@ -52,13 +55,15 @@ export default function SettingsClient() {
   const [events, setEvents] = useState<DateEvent[]>([]);
   const [favoriteMessages, setFavoriteMessages] = useState<Message[]>([]);
 
-  const [importantForm, setImportantForm] = useState<DateFormState>(EMPTY_FORM);
+  const [importantForm, setImportantForm] =
+    useState<DateFormState>(EMPTY_FORM);
   const [upcomingForm, setUpcomingForm] = useState<DateFormState>(EMPTY_FORM);
 
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
-
+  const [profilePhotoURL, setProfilePhotoURL] = useState("");
+  const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false);
   const selectedTheme = THEMES[themeId];
 
   const importantDates = useMemo(() => {
@@ -68,6 +73,21 @@ export default function SettingsClient() {
   const upcomingDates = useMemo(() => {
     return events.filter((event) => event.type === "upcoming");
   }, [events]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const userRef = doc(db, "users", currentUser.uid);
+
+    const unsubscribeUser = onSnapshot(userRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+
+      const userData = snapshot.data();
+      setProfilePhotoURL(userData.photoURL || "");
+    });
+
+    return () => unsubscribeUser();
+  }, [currentUser]);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
@@ -131,6 +151,64 @@ export default function SettingsClient() {
 
     return () => unsubscribeFavorites();
   }, [currentUser]);
+
+  const handleProfilePhotoUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+
+    if (!file || !currentUser) return;
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const isImage = allowedTypes.includes(file.type);
+    const maxSizeInBytes = 2 * 1024 * 1024; // 2 MB
+
+    if (!isImage) {
+      alert("Please upload JPG, PNG, or WEBP only.");
+      return;
+    }
+
+    if (file.size > maxSizeInBytes) {
+      alert("Image size should be less than 2 MB.");
+      return;
+    }
+
+    setUploadingProfilePhoto(true);
+    setSuccessMessage("");
+
+    try {
+      const extensionMap: Record<string, string> = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+      };
+
+      const fileExtension = extensionMap[file.type];
+
+      const storageRef = ref(
+        storage,
+        `profile-images/${currentUser.uid}/profile.${fileExtension}`
+      );
+
+      await uploadBytes(storageRef, file);
+
+      const downloadURL = await getDownloadURL(storageRef);
+
+      await setDoc(
+        doc(db, "users", currentUser.uid),
+        {
+          photoURL: downloadURL,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setSuccessMessage("Profile photo updated successfully 💜");
+    } finally {
+      setUploadingProfilePhoto(false);
+      event.target.value = "";
+    }
+  };
 
   const handleSaveTheme = async () => {
     setSaving(true);
@@ -244,6 +322,16 @@ export default function SettingsClient() {
     if (editingEventId === eventId) {
       handleCancelEdit();
     }
+  };
+
+  const handleRemoveFavoriteMessage = async (messageId: string) => {
+    if (!currentUser) return;
+
+    const messageRef = doc(db, "messages", messageId);
+
+    await updateDoc(messageRef, {
+      isFavoriteBy: arrayRemove(currentUser.uid),
+    });
   };
 
   const renderDateForm = (
@@ -436,6 +524,47 @@ export default function SettingsClient() {
           </p>
         )}
 
+        {/* <div className="mb-6 rounded-3xl bg-white/80 p-6 shadow-xl backdrop-blur">
+          <div className="mb-4">
+            <h2 className={`text-xl font-bold ${selectedTheme.text}`}>
+              Profile Photo
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Upload a small profile picture for your chat avatar.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-purple-100 text-2xl font-bold text-purple-700">
+              {profilePhotoURL ? (
+                <img
+                  src={profilePhotoURL}
+                  alt="Profile"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                currentUser?.email?.charAt(0).toUpperCase() || "U"
+              )}
+            </div>
+
+            <div>
+              <label className="inline-flex cursor-pointer rounded-xl bg-purple-500 px-4 py-2 text-sm font-semibold text-white shadow-md hover:bg-purple-600">
+                {uploadingProfilePhoto ? "Uploading..." : "Upload photo"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploadingProfilePhoto}
+                  onChange={handleProfilePhotoUpload}
+                />
+              </label>
+
+              <p className="mt-2 text-xs text-gray-500">
+                Image only. Max size 2 MB.
+              </p>
+            </div>
+          </div>
+        </div> */}
         <div className="mb-6 rounded-3xl bg-white/80 p-6 shadow-xl backdrop-blur">
           <p className="mb-3 block text-sm font-medium text-gray-700">Theme</p>
 
@@ -449,11 +578,10 @@ export default function SettingsClient() {
                   key={theme.id}
                   type="button"
                   onClick={() => setThemeId(id)}
-                  className={`rounded-2xl border p-4 text-left transition ${
-                    isSelected
-                      ? "border-purple-500 bg-purple-50 shadow-md"
-                      : "border-gray-200 bg-white hover:bg-gray-50"
-                  }`}
+                  className={`rounded-2xl border p-4 text-left transition ${isSelected
+                    ? "border-purple-500 bg-purple-50 shadow-md"
+                    : "border-gray-200 bg-white hover:bg-gray-50"
+                    }`}
                 >
                   <div
                     className={`mb-3 h-16 rounded-xl bg-gradient-to-br ${theme.background}`}
@@ -498,10 +626,14 @@ export default function SettingsClient() {
               {favoriteMessages.map((message) => (
                 <article
                   key={message.id}
-                  className="rounded-2xl bg-white p-4 shadow-sm"
+                  className="rounded-2xl bg-white p-4 shadow-sm transition hover:shadow-md"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                    <Link
+                      href={`/chat?messageId=${message.id}`}
+                      className="min-w-0 flex-1"
+                      title="Open this message in chat"
+                    >
                       <p className="whitespace-pre-line text-sm font-medium leading-6 text-gray-800">
                         {message.text}
                       </p>
@@ -509,11 +641,20 @@ export default function SettingsClient() {
                       <p className="mt-2 text-xs font-semibold text-gray-400">
                         {formatMessageDate(message.createdAt)}
                       </p>
-                    </div>
 
-                    <span className="shrink-0 rounded-full bg-yellow-50 px-3 py-1 text-xs font-bold text-yellow-700">
-                      ⭐
-                    </span>
+                      <p className="mt-1 text-xs font-semibold text-purple-500">
+                        Open in chat →
+                      </p>
+                    </Link>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveFavoriteMessage(message.id)}
+                      className="shrink-0 rounded-full bg-yellow-50 px-3 py-1 text-xs font-bold text-yellow-700 hover:bg-red-50 hover:text-red-600"
+                      title="Remove from favorites"
+                    >
+                      ⭐ Remove
+                    </button>
                   </div>
                 </article>
               ))}

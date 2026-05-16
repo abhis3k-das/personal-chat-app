@@ -14,4 +14,5 @@ export interface Message {
   isFavoriteBy?: string[];
   createdAt: any;
   seenAt?: any;
+  editedAt?: any;
 }
